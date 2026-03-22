@@ -1,0 +1,21 @@
+flowchart TD
+    A[Start] --> B[Initialize Agent: create OpenAI client, set model, max_iterations]
+    B --> C[Call agent run query]
+    C --> D{Iteration_less_than_5}
+    D -->|Yes| E[Send messages to OpenAI API]
+    E --> F[Receive response content]
+    F --> G{Content_contains_Action}
+    G -->|Yes| H[Parse action string]
+    H --> I{Action_is_search}
+    I -->|Yes| J[Extract query]
+    J --> K[Call search query]
+    K --> L[Get observation from Tavily]
+    L --> M[Append observation to messages]
+    M --> D
+    I -->|No| N[Append Unknown action to messages]
+    N --> D
+    G -->|No| O{Content_contains_Final_Answer}
+    O -->|Yes| P[Extract and return answer]
+    O -->|No| D
+    D -->|No| Q[Print Limit of reasoning 5 loops complete]
+    Q --> R[Return Max iterations reached]
