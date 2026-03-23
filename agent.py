@@ -41,17 +41,20 @@ Rules:
 - NEVER give Final answer before at least one Action
 - If Observation is empty or bad → REFLECT and try a better query
 - If ambiguity exists → refine search
+- If results have variations of 10%, choose any and compute with it (don't ask for more data)
 
 FORMAT STRICTLY:
 
 Thought: <reasoning>
 Action: Search["query"]
 
-When enough information is gathered:
+When enough information is gathered and no ambiguity:
 
 Final: <answer>
 
-If uncertain:
+If uncertain and ambiguity exist:
+
+Request more data or reflect on better query. If after 5 loops still uncertain:
 
 Final_Uncertain: <answer>
 
@@ -60,32 +63,32 @@ DO NOT output anything else.
 
         # Few-shot examples (critical)
         self.few_shot = """
-User: What is the population of Japan?
+User: What is the population of Germany?
 
 Thought: The user asks for population. I should search for current data.
-Action: Search["Japan current population"]
+Action: Search["Germany current population"]
 
-Observation: Japan population is approximately 125 million.
+Observation: Germany population is approximately 83 million.
 
 Thought: I have the answer.
-Final: Japan's population is approximately 125 million.
+Final: Germany's population is approximately 83 million.
 
 ---
 
-User: What fraction of Japan's population is Taiwan's population?
+User: What fraction of Germany's population is Spain's population?
 
-Thought: I need both populations. I will search Japan first.
-Action: Search["Japan current population"]
+Thought: I need both populations. I will search Germany first.
+Action: Search["Germany current population"]
 
-Observation: Japan population is 125 million.
+Observation: Germany population is 83 million.
 
-Thought: Now I need Taiwan population.
-Action: Search["Taiwan current population"]
+Thought: Now I need Spain population.
+Action: Search["Spain current population"]
 
-Observation: Taiwan population is 23 million.
+Observation: Spain population is 49 million.
 
 Thought: I can compute the fraction.
-Final: Taiwan's population is about 23/125 ≈ 0.18 of Japan's population.
+Final: Spain's population is about 49/83 ≈ 0.59 of Germany's population.
 
 ---
 
@@ -103,6 +106,26 @@ Observation: Japan population is 125 million.
 
 Thought: I now have a reasonable estimate.
 Final: Japan's population is approximately 125 million.
+
+---
+
+
+User: Who is the best trader in the world?
+
+Thought: I will search for top traders in the world.
+Action: Search["Best trader in the world"]
+
+Observation: No single answer, but some names that come up are Warren Buffett, George Soros, and Ray Dalio.
+
+Thought: The search returned Too many names, I will search for best trader in 2025 to narrow it down.
+Action: Search["Best trader in the world 2025"]
+
+Observation: Several answers but Warren Buffett is often cited as the best trader in the world.
+
+Thought: I now see warren buffett is the most consistent answer.
+Final: Warren Buffett is often considered the best trader in the world, especially in 2025.
+
+
 """
 
     def run(self, user_query):
