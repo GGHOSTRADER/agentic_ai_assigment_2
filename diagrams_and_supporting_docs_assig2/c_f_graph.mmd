@@ -1,0 +1,37 @@
+flowchart TD
+    A[Start run &#40;user_query&#41;] --> B[Reset loop_count = 0]
+    B --> C[Build messages: system prompt + few-shot + user query]
+    C --> D{loop_count < max_loops?}
+
+    D -- No --> Z[Print: Limit of reasoning 5 loops complete<br/>Return Final_Uncertain]
+    D -- Yes --> E[Increment loop_count]
+    E --> F[Call LLM chat.completions.create]
+    F --> G[Get output text]
+    G --> H[Print output]
+
+    H --> I{Contains Final: or Final_Uncertain:?}
+    I -- Yes --> J[Return output]
+    I -- No --> K{Contains Action:?}
+
+    K -- No --> L[Append repair message:<br/>You must follow Thought → Action format]
+    L --> D
+
+    K -- Yes --> M[Parse Action line]
+    M --> N{Parse success?}
+
+    N -- No --> O[Append repair message:<br/>Malformed Action. Use Search&#91;...&#93;]
+    O --> D
+
+    N -- Yes --> P[Extract search query]
+    P --> Q[Execute search&#40;query&#41;]
+    Q --> R{Observation empty?}
+
+    R -- Yes --> S[Set observation = No results found.]
+    R -- No --> T[Keep returned observation]
+
+    S --> U[Print Observation]
+    T --> U
+
+    U --> V[Append assistant output to messages]
+    V --> W[Append user Observation to messages]
+    W --> D
