@@ -1,165 +1,169 @@
+import json
 import os
-import openai
+import re
+from typing import Any
+
+from openai import OpenAI
 from dotenv import load_dotenv
+
 from tools import search
+
 
 load_dotenv()
 
 
 class Agent:
     def __init__(self):
-        self.client = openai.OpenAI(
+        self.client = OpenAI(
             api_key=os.getenv("GEMINI_API_KEY"),
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
+
         self.model = "gemini-2.5-flash-lite"
-        self.max_iterations = 5
+        self.max_loops = 5
 
-    def run(self, query):
-        system_prompt = """
-You are a ReAct agent that reasons step by step, uses tools to gather information, reflects on results, and plans next actions.
+        # Explicit state
+        self.history = []
+        self.has_searched = False
+        self.loop_count = 0
 
-Always follow this format in your responses:
+        # System prompt (ReAct + strict format)
+        self.system_prompt = """
+You are a ReAct agent.
 
-Thought: [Your reasoning here]
+You MUST follow this loop strictly:
 
-Action: search(query="your search query here")
+Thought → Action → Observation → Thought → Action ...
 
-After receiving an observation, reflect and continue with:
+Rules:
+- NEVER skip Action after Thought
+- NEVER output multiple Thoughts in a row
+- NEVER give Final answer before at least one Action
+- If Observation is empty or bad → REFLECT and try a better query
+- If ambiguity exists → refine search
 
-Thought: [Reflection and new reasoning]
+FORMAT STRICTLY:
 
-Action: search(query="next query") or Final Answer: [answer]
+Thought: <reasoning>
+Action: Search["query"]
 
-Available tool:
-- search(query): Searches the web for current information using Tavily API. Use this to find facts, statistics, etc.
+When enough information is gathered:
 
-Few-shot examples:
+Final: <answer>
 
-Example 1: Simple question
-User: What is the capital of France?
-Thought: The user asks for the capital of France. I know it's Paris, but to demonstrate tool use, I should search.
-Action: search(query="capital of France")
+If uncertain:
 
-(Observation would be provided, then continue)
+Final_Uncertain: <answer>
 
-Thought: The search confirms Paris is the capital.
-Final Answer: Paris
-
-Example 2: Complex question requiring decomposition
-User: What fraction of Japan's population is Taiwan's population as of 2025?
-Thought: To calculate the fraction, I need the populations of Japan and Taiwan in 2025. I should search for each separately.
-Action: search(query="Japan population 2025")
-
-(Observation: Japan population 2025 is approximately 124.9 million)
-
-Thought: Got Japan's population. Now need Taiwan's.
-Action: search(query="Taiwan population 2025")
-
-(Observation: Taiwan population 2025 is approximately 23.6 million)
-
-Thought: Now I can calculate: 23.6 / 124.9 ≈ 0.189
-Final Answer: Approximately 0.189
-
-Example 3: Handling failed search
-Thought: I need information on X.
-Action: search(query="very specific query")
-
-(Observation: No information found or empty results)
-
-Thought: The search returned nothing. I might have been too specific. I will try searching for 'Japan current population' instead.
-Action: search(query="general query")
-
-Remember: Always decompose complex tasks, reflect on failures, and use tools appropriately.
+DO NOT output anything else.
 """
 
+        # Few-shot examples (critical)
+        self.few_shot = """
+User: What is the population of Japan?
+
+Thought: The user asks for population. I should search for current data.
+Action: Search["Japan current population"]
+
+Observation: Japan population is approximately 125 million.
+
+Thought: I have the answer.
+Final: Japan's population is approximately 125 million.
+
+---
+
+User: What fraction of Japan's population is Taiwan's population?
+
+Thought: I need both populations. I will search Japan first.
+Action: Search["Japan current population"]
+
+Observation: Japan population is 125 million.
+
+Thought: Now I need Taiwan population.
+Action: Search["Taiwan current population"]
+
+Observation: Taiwan population is 23 million.
+
+Thought: I can compute the fraction.
+Final: Taiwan's population is about 23/125 ≈ 0.18 of Japan's population.
+
+---
+
+User: Japan population 2025 exact?
+
+Thought: The query may be too specific. I will search broadly.
+Action: Search["Japan population 2025"]
+
+Observation: No results found.
+
+Thought: The search returned nothing. I was too specific. I will broaden it.
+Action: Search["Japan current population"]
+
+Observation: Japan population is 125 million.
+
+Thought: I now have a reasonable estimate.
+Final: Japan's population is approximately 125 million.
+"""
+
+    def run(self, user_query):
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query},
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": self.few_shot},
+            {"role": "user", "content": user_query},
         ]
 
-        has_used_search = False
+        while self.loop_count < self.max_loops:
+            self.loop_count += 1
+            print(f"\n--- Iteration {self.loop_count} ---")
 
-        for iteration in range(self.max_iterations):
-            print(f"\n--- Iteration {iteration + 1} ---")
             response = self.client.chat.completions.create(
-                model=self.model, messages=messages, max_tokens=1000
+                model=self.model,
+                messages=messages,
+                temperature=0,
+                stop=["Observation:"],
             )
-            content = response.choices[0].message.content
-            print(content)
-            messages.append({"role": "assistant", "content": content})
 
-            if "Action:" in content:
-                # Parse the action
-                lines = content.split("\n")
-                action_line = next(
-                    (line for line in lines if line.strip().startswith("Action:")), None
+            output = response.choices[0].message.content.strip()
+            print(output)
+
+            # --- PARSE OUTPUT ---
+            if "Final:" in output or "Final_Uncertain:" in output:
+                return output
+
+            if "Action:" not in output:
+                # malformed → force correction
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "You must follow Thought → Action format. Provide an Action.",
+                    }
                 )
-                if action_line:
-                    action_str = action_line.split("Action:", 1)[1].strip()
-                    if action_str.startswith("search(query="):
-                        has_used_search = True
-                        # Extract query
-                        start = action_str.find('"')
-                        end = action_str.find('"', start + 1)
-                        if start != -1 and end != -1:
-                            query_search = action_str[start + 1 : end]
-                            observation = search(query_search)
-                            print(f"Observation: {observation}")
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": f"Observation: {observation}",
-                                }
-                            )
-                        else:
-                            observation = "Observation: Invalid query format"
-                            print(observation)
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": observation,
-                                }
-                            )
-                    elif action_str.startswith("Final Answer:"):
-                        final_answer = action_str.split("Final Answer:", 1)[1].strip()
-                        if not has_used_search:
-                            print("Enforcing tool use before final answer.")
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": "Observation: Final Answer issued before any search. Please perform a search action and reflect first."
-                                }
-                            )
-                            continue
-                        print(f"Final Answer: {final_answer}")
-                        return final_answer
-                    else:
-                        observation = "Observation: Unknown action"
-                        print(observation)
-                        messages.append({"role": "user", "content": observation})
-                else:
-                    observation = "Observation: No action found"
-                    print(observation)
-                    messages.append({"role": "user", "content": observation})
-            elif "Final Answer:" in content:
-                final_answer = content.split("Final Answer:", 1)[1].strip()
-                if not has_used_search:
-                    print("Enforcing tool use before final answer.")
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": "Observation: Final Answer issued without prior search action. Please produce a search and reflection first."
-                        }
-                    )
-                    continue
-                print(f"Final Answer: {final_answer}")
-                return final_answer
-            else:
-                # If no action or final answer, prompt to continue
-                prompt = "Observation: No final answer yet. Continue with reflection and Action or Final Answer."
-                print(prompt)
-                messages.append({"role": "user", "content": prompt})
+                continue
+
+            # Extract query
+            try:
+                action_line = [l for l in output.split("\n") if "Action:" in l][0]
+                query = action_line.split("Search[")[1].split("]")[0].strip('"')
+            except Exception:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": 'Malformed Action. Use: Action: Search["..."]',
+                    }
+                )
+                continue
+
+            # --- TOOL EXECUTION ---
+            observation = search(query)
+
+            if not observation:
+                observation = "No results found."
+
+            print(f"Observation: {observation}")
+
+            # --- APPEND BACK TO LLM ---
+            messages.append({"role": "assistant", "content": output})
+            messages.append({"role": "user", "content": f"Observation: {observation}"})
 
         print("Limit of reasoning 5 loops complete")
-        return "Max iterations reached without final answer"
+        return "Final_Uncertain: Could not complete reasoning within limits."

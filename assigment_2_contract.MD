@@ -24,6 +24,8 @@
   - Implement Stop sequence that stops the LLM from keep generating after the word "Action" been generated
   - Can Max iterate of the loop is 5 times
   - Use Few few shot learning prompting to teach the agent how to reason and behave. of a user asking a question and the agent going through the Thought/Action/Observation steps.
+  - Also include few shot examples for handling ambiguity.
+  - If result of query has multiple different answer which makes it ambious, must continue the query.
 
 ## Success Criteria
 - Agent decomposed task in "What fraction of Japan's population is Taiwan's population as of 2025?" question

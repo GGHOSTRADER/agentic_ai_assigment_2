@@ -6,7 +6,7 @@ def main():
     print("ReAct Agent Started. Type 'exit' to quit.")
     query = input("Enter your query: ")
     response = agent.run(query)
-    print("Final Response:", response)
+    print("End of execution")
 
 
 if __name__ == "__main__":
